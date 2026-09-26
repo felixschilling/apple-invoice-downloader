@@ -1,4 +1,3 @@
-const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
 
@@ -36,7 +35,212 @@ function parseGermanDate(dateStr) {
   return dateStr.replace(/[.\s]/g, '-');
 }
 
-async function main() {
+function isValidCalendarDate(y, m, d) {
+  if (m < 1 || m > 12 || d < 1) return false;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+}
+
+/** CLI date: ISO YYYY-MM-DD only */
+function parseCliDate(input, optionLabel) {
+  const trimmed = String(input).trim();
+  const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!isoMatch) {
+    throw new Error(
+      `Ungültiges Datum für ${optionLabel}: "${input}". ` +
+      'Erwartetes Format: YYYY-MM-DD (z. B. 2025-01-01).'
+    );
+  }
+
+  const y = Number(isoMatch[1]);
+  const m = Number(isoMatch[2]);
+  const d = Number(isoMatch[3]);
+
+  if (!isValidCalendarDate(y, m, d)) {
+    throw new Error(`Ungültiges Datum für ${optionLabel}: "${input}" ist kein gültiger Kalendertag.`);
+  }
+
+  return `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+
+function todayIsoLocal() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function dateInInclusiveRange(isoDate, fromIso, toIso) {
+  return isoDate >= fromIso && isoDate <= toIso;
+}
+
+function parseCliOptions(argv) {
+  const opts = {
+    from: null,
+    to: null,
+    dateFilter: false,
+    fromIso: null,
+    toIso: null
+  };
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--from') {
+      if (i + 1 >= argv.length) {
+        throw new Error('Option --from erwartet ein Datum (z. B. --from 2025-01-01).');
+      }
+      opts.from = argv[++i];
+    } else if (arg === '--to') {
+      if (i + 1 >= argv.length) {
+        throw new Error('Option --to erwartet ein Datum (z. B. --to 2025-12-31).');
+      }
+      opts.to = argv[++i];
+    } else if (arg === '--help' || arg === '-h') {
+      opts.help = true;
+    } else {
+      throw new Error(`Unbekannte Option: ${arg}. Nutze --help für die Hilfe.`);
+    }
+  }
+
+  if (opts.help) return opts;
+
+  opts.dateFilter = opts.from !== null || opts.to !== null;
+  if (opts.dateFilter) {
+    const currentYear = new Date().getFullYear();
+    opts.fromIso = opts.from !== null
+      ? parseCliDate(opts.from, '--from')
+      : `${currentYear}-01-01`;
+    opts.toIso = opts.to !== null
+      ? parseCliDate(opts.to, '--to')
+      : todayIsoLocal();
+
+    if (opts.fromIso > opts.toIso) {
+      throw new Error(
+        `Ungültiger Datumsbereich: --from (${opts.fromIso}) liegt nach --to (${opts.toIso}).`
+      );
+    }
+  }
+
+  return opts;
+}
+
+function printHelp() {
+  console.log(`
+🍎 Apple Invoice Downloader v2
+═══════════════════════════════════════
+
+VERWENDUNG:
+  node apple-invoice-downloader-v2.js [OPTIONEN]
+
+OPTIONEN:
+  --from <datum>   Erste Rechnung (inklusive). Format: YYYY-MM-DD
+  --to <datum>     Letzte Rechnung (inklusive). Format: YYYY-MM-DD
+  -h, --help       Diese Hilfe anzeigen
+
+BEISPIELE:
+  node apple-invoice-downloader-v2.js
+  node apple-invoice-downloader-v2.js --from 2025-01-01 --to 2025-12-31
+
+OHNE --from/--to:
+  Scrollt bis Einträge aus dem Vorjahr sichtbar sind und lädt alle sichtbaren Belege
+  (sinnvoll für das laufende Steuerjahr).
+
+MIT --from/--to:
+  Scrollt so weit, dass der Bereich abgedeckt ist, und lädt nur Rechnungen in diesem
+  Zeitraum. Fehlende Grenze: --from = 1. Jan. des aktuellen Jahres, --to = heute.
+
+UNTERSCHIED ZU V1:
+  - Sammelt ERST alle Bestellnummern
+  - Lädt DANN jede einzeln direkt
+  - Robuster, keine Race Conditions
+  - Bessere Fehlerbehandlung
+
+═══════════════════════════════════════
+  `);
+}
+
+function extractDateFromButtonText(buttonText) {
+  const dateMatch = buttonText.match(/(\d{1,2}\.\s+\w+\.?\s+\d{4})/);
+  return dateMatch ? parseGermanDate(dateMatch[1]) : null;
+}
+
+async function scrollPurchaseList(page, { dateFilter, fromIso }) {
+  const currentYear = new Date().getFullYear();
+  const lastYear = currentYear - 1;
+  const maxScrollAttempts = 50;
+  let previousCount = 0;
+  let scrollAttempts = 0;
+
+  const disclosureSelector =
+    'button[data-auto-test-id="RAP2.PurchaseList.PurchaseHeader.Button.ToggleDisclosure"]';
+
+  if (dateFilter) {
+    console.log(`⏬ Scrolle bis Einträge vor ${fromIso} sichtbar sind (Zeitraum ab ${fromIso})...`);
+  } else {
+    console.log(`⏬ Scrolle bis Einträge aus ${lastYear} sichtbar sind...`);
+  }
+
+  while (scrollAttempts < maxScrollAttempts) {
+    const currentCount = await page.locator(disclosureSelector).count();
+    const allButtons = await page.locator(disclosureSelector).all();
+
+    let stopScrolling = false;
+
+    if (dateFilter) {
+      for (const btn of allButtons) {
+        const text = await btn.textContent();
+        const iso = extractDateFromButtonText(text);
+        if (iso && iso < fromIso) {
+          console.log(`✅ Einträge vor ${fromIso} gefunden (${currentCount} Käufe geladen)\n`);
+          stopScrolling = true;
+          break;
+        }
+      }
+    } else {
+      for (const btn of allButtons) {
+        const text = await btn.textContent();
+        if (text.includes(String(lastYear))) {
+          console.log(`✅ Einträge aus ${lastYear} gefunden (${currentCount} Käufe geladen)\n`);
+          stopScrolling = true;
+          break;
+        }
+      }
+    }
+
+    if (stopScrolling) break;
+
+    await page.evaluate(() => {
+      window.scrollTo(0, document.body.scrollHeight);
+    });
+    await page.waitForTimeout(1500);
+
+    if (currentCount === previousCount) {
+      if (dateFilter) {
+        console.log(`✅ Ende der Liste erreicht (${currentCount} Käufe, kein Eintrag vor ${fromIso})\n`);
+      } else {
+        console.log(`✅ Ende der Liste erreicht (${currentCount} Käufe, kein ${lastYear} gefunden)\n`);
+      }
+      break;
+    }
+
+    console.log(`   ${currentCount} Käufe geladen...`);
+    previousCount = currentCount;
+    scrollAttempts++;
+  }
+
+  if (scrollAttempts >= maxScrollAttempts) {
+    const finalCount = await page.locator(disclosureSelector).count();
+    console.log(`⚠️  Max Scroll-Versuche erreicht (${finalCount} Käufe)\n`);
+  }
+
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(500);
+}
+
+async function main(cliOptions) {
+  const { chromium } = require('playwright');
+
   console.log('🍎 Apple Invoice Downloader v2\n');
   console.log('═══════════════════════════════════════\n');
   
@@ -106,63 +310,15 @@ async function main() {
     
     // SCHRITT 1: Alle Bestellungen sammeln (mit Infinite Scroll)
     console.log('📋 Sammle alle Bestellungen...\n');
-    
-    // Erst scrollen um alle relevanten Einträge zu laden
-    const currentYear = new Date().getFullYear();
-    const lastYear = currentYear - 1;
-    
-    console.log(`⏬ Scrolle bis Einträge aus ${lastYear} sichtbar sind...`);
-    let previousCount = 0;
-    let currentCount = 0;
-    let scrollAttempts = 0;
-    const maxScrollAttempts = 50;
-    let hasLastYearEntries = false;
-    
-    while (scrollAttempts < maxScrollAttempts && !hasLastYearEntries) {
-      // Aktuelle Anzahl zählen
-      currentCount = await page.locator('button[data-auto-test-id="RAP2.PurchaseList.PurchaseHeader.Button.ToggleDisclosure"]').count();
-      
-      // Prüfe ob wir schon Einträge aus letztem Jahr haben
-      const allButtons = await page.locator('button[data-auto-test-id="RAP2.PurchaseList.PurchaseHeader.Button.ToggleDisclosure"]').all();
-      for (const btn of allButtons) {
-        const text = await btn.textContent();
-        if (text.includes(String(lastYear))) {
-          hasLastYearEntries = true;
-          break;
-        }
-      }
-      
-      if (hasLastYearEntries) {
-        console.log(`✅ Einträge aus ${lastYear} gefunden (${currentCount} Käufe geladen)\n`);
-        break;
-      }
-      
-      // Ans Ende scrollen
-      await page.evaluate(() => {
-        window.scrollTo(0, document.body.scrollHeight);
-      });
-      
-      // Warten bis neue Einträge geladen sind
-      await page.waitForTimeout(1500);
-      
-      // Wenn keine neuen Einträge, sind wir am Ende
-      if (currentCount === previousCount) {
-        console.log(`✅ Ende der Liste erreicht (${currentCount} Käufe, kein ${lastYear} gefunden)\n`);
-        break;
-      }
-      
-      console.log(`   ${currentCount} Käufe geladen...`);
-      previousCount = currentCount;
-      scrollAttempts++;
+
+    if (cliOptions.dateFilter) {
+      console.log(`📅 Filter: Rechnungen von ${cliOptions.fromIso} bis ${cliOptions.toIso} (inklusive)\n`);
     }
-    
-    if (scrollAttempts >= maxScrollAttempts) {
-      console.log(`⚠️  Max Scroll-Versuche erreicht (${currentCount} Käufe)\n`);
-    }
-    
-    // Zurück nach oben scrollen
-    await page.evaluate(() => window.scrollTo(0, 0));
-    await page.waitForTimeout(500);
+
+    await scrollPurchaseList(page, {
+      dateFilter: cliOptions.dateFilter,
+      fromIso: cliOptions.fromIso
+    });
     
     const orders = [];
     const disclosureButtons = await page.locator('button[data-auto-test-id="RAP2.PurchaseList.PurchaseHeader.Button.ToggleDisclosure"]').all();
@@ -183,6 +339,12 @@ async function main() {
           const orderId = orderIdMatch[1];
           const date = dateMatch ? parseGermanDate(dateMatch[1]) : 'unknown';
           const amount = amountMatch ? amountMatch[1].replace(',', '.') : 'unknown';
+
+          if (cliOptions.dateFilter && date !== 'unknown') {
+            if (!dateInInclusiveRange(date, cliOptions.fromIso, cliOptions.toIso)) {
+              continue;
+            }
+          }
           
           // Prüfen ob dieser Button bereits expanded ist
           const ariaExpanded = await button.getAttribute('aria-expanded');
@@ -460,27 +622,21 @@ async function main() {
 // CLI Parameter
 const args = process.argv.slice(2);
 
-if (args.includes('--help') || args.includes('-h')) {
-  console.log(`
-🍎 Apple Invoice Downloader v2
-═══════════════════════════════════════
+let cliOptions;
+try {
+  cliOptions = parseCliOptions(args);
+} catch (err) {
+  console.error(`\n❌ ${err.message}\n`);
+  process.exit(1);
+}
 
-VERWENDUNG:
-  node apple-invoice-downloader-v2.js
-
-UNTERSCHIED ZU V1:
-  - Sammelt ERST alle Bestellnummern
-  - Lädt DANN jede einzeln direkt
-  - Robuster, keine Race Conditions
-  - Bessere Fehlerbehandlung
-
-═══════════════════════════════════════
-  `);
+if (cliOptions.help) {
+  printHelp();
   process.exit(0);
 }
 
 // Start
 console.log('Starte in 2 Sekunden...\n');
 setTimeout(() => {
-  main().catch(console.error);
+  main(cliOptions).catch(console.error);
 }, 2000);
