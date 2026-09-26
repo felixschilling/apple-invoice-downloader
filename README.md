@@ -10,7 +10,7 @@ Automatisierter Download aller Apple-Rechnungen von reportaproblem.apple.com
 - ✅ Session-Management (2FA nur einmal nötig)
 - ✅ Family Sharing Support (optional)
 - ✅ Intelligente Dateinamen: `2025-12-10_Apple_22.99EUR_ChatGPT_Plus_MM6310L345.pdf`
-- ✅ Lädt automatisch das komplette aktuelle Jahr (Infinite Scroll)
+- ✅ Lädt automatisch das komplette aktuelle Jahr (Infinite Scroll) — oder einen frei wählbaren Datumsbereich (`--from` / `--to`)
 - ✅ Überspringt Käufe ohne Beleg
 - ✅ Detailliertes Logging
 - ✅ Error Handling & Retry-Logic
@@ -68,6 +68,35 @@ node apple-invoice-downloader-v2.js
 6. 📋 Sammelt alle Bestellnummern mit Belegen
 7. 📥 Lädt alle Rechnungen als PDF herunter
 
+### Datumsbereich (z. B. ganzes Kalenderjahr)
+
+Nur Rechnungen in einem Zeitraum laden (beide Grenzen **inklusive**):
+
+```bash
+node apple-invoice-downloader-v2.js --from 2025-01-01 --to 2025-12-31
+```
+
+Deutsches Datumsformat ist ebenfalls möglich:
+
+```bash
+node apple-invoice-downloader-v2.js --from 01.01.2025 --to 31.12.2025
+```
+
+| Option | Bedeutung |
+|--------|-----------|
+| `--from` | Erstes Rechnungsdatum (ISO `YYYY-MM-DD` oder `TT.MM.JJJJ`) |
+| `--to` | Letztes Rechnungsdatum (ISO oder deutsch) |
+
+Wenn nur eine Grenze gesetzt ist: fehlendes `--from` = 1. Januar des **aktuellen** Jahres, fehlendes `--to` = **heute**.
+
+Ohne `--from` und `--to` bleibt das bisherige Verhalten (Scroll bis Vorjahr sichtbar, alle geladenen Belege).
+
+Hilfe anzeigen:
+
+```bash
+node apple-invoice-downloader-v2.js --help
+```
+
 ### Weitere Starts
 
 ```bash
@@ -118,6 +147,9 @@ Perfekt um regelmäßig alle Belege zu sammeln:
 ```bash
 # Einmal im Monat laufen lassen
 node apple-invoice-downloader-v2.js
+
+# Nur ein abgeschlossenes Steuerjahr
+node apple-invoice-downloader-v2.js --from 2025-01-01 --to 2025-12-31
 
 # PDFs zu Cloud uploaden
 # Nach Datum sortiert archivieren
