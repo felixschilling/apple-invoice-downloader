@@ -76,16 +76,10 @@ Nur Rechnungen in einem Zeitraum laden (beide Grenzen **inklusive**):
 node apple-invoice-downloader-v2.js --from 2025-01-01 --to 2025-12-31
 ```
 
-Deutsches Datumsformat ist ebenfalls möglich:
-
-```bash
-node apple-invoice-downloader-v2.js --from 01.01.2025 --to 31.12.2025
-```
-
 | Option | Bedeutung |
 |--------|-----------|
-| `--from` | Erstes Rechnungsdatum (ISO `YYYY-MM-DD` oder `TT.MM.JJJJ`) |
-| `--to` | Letztes Rechnungsdatum (ISO oder deutsch) |
+| `--from` | Erstes Rechnungsdatum (`YYYY-MM-DD`) |
+| `--to` | Letztes Rechnungsdatum (`YYYY-MM-DD`) |
 
 Wenn nur eine Grenze gesetzt ist: fehlendes `--from` = 1. Januar des **aktuellen** Jahres, fehlendes `--to` = **heute**.
 

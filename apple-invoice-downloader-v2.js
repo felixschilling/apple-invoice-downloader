@@ -41,30 +41,20 @@ function isValidCalendarDate(y, m, d) {
   return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
 }
 
-/** CLI date: ISO (2025-01-01) or German (01.01.2025) → YYYY-MM-DD */
+/** CLI date: ISO YYYY-MM-DD only */
 function parseCliDate(input, optionLabel) {
   const trimmed = String(input).trim();
-  let y;
-  let m;
-  let d;
-
   const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (isoMatch) {
-    y = Number(isoMatch[1]);
-    m = Number(isoMatch[2]);
-    d = Number(isoMatch[3]);
-  } else {
-    const deMatch = trimmed.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
-    if (!deMatch) {
-      throw new Error(
-        `Ungültiges Datum für ${optionLabel}: "${input}". ` +
-        'Erwartet ISO (YYYY-MM-DD, z. B. 2025-01-01) oder deutsch (TT.MM.JJJJ, z. B. 01.01.2025).'
-      );
-    }
-    d = Number(deMatch[1]);
-    m = Number(deMatch[2]);
-    y = Number(deMatch[3]);
+  if (!isoMatch) {
+    throw new Error(
+      `Ungültiges Datum für ${optionLabel}: "${input}". ` +
+      'Erwartetes Format: YYYY-MM-DD (z. B. 2025-01-01).'
+    );
   }
+
+  const y = Number(isoMatch[1]);
+  const m = Number(isoMatch[2]);
+  const d = Number(isoMatch[3]);
 
   if (!isValidCalendarDate(y, m, d)) {
     throw new Error(`Ungültiges Datum für ${optionLabel}: "${input}" ist kein gültiger Kalendertag.`);
@@ -144,14 +134,13 @@ VERWENDUNG:
   node apple-invoice-downloader-v2.js [OPTIONEN]
 
 OPTIONEN:
-  --from <datum>   Erste Rechnung (inklusive). ISO: YYYY-MM-DD oder TT.MM.JJJJ
-  --to <datum>     Letzte Rechnung (inklusive). ISO: YYYY-MM-DD oder TT.MM.JJJJ
+  --from <datum>   Erste Rechnung (inklusive). Format: YYYY-MM-DD
+  --to <datum>     Letzte Rechnung (inklusive). Format: YYYY-MM-DD
   -h, --help       Diese Hilfe anzeigen
 
 BEISPIELE:
   node apple-invoice-downloader-v2.js
   node apple-invoice-downloader-v2.js --from 2025-01-01 --to 2025-12-31
-  node apple-invoice-downloader-v2.js --from 01.01.2025 --to 31.12.2025
 
 OHNE --from/--to:
   Scrollt bis Einträge aus dem Vorjahr sichtbar sind und lädt alle sichtbaren Belege
